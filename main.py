@@ -16855,11 +16855,20 @@ class CameraScreen(Screen):
         super().__init__(**kwargs)
         self.photos = []
         self._built = False
+        self.camera_available = False
 
     def on_enter(self):
         if not self._built:
             self._built = True
             self._build_ui()
+        # 화면 진입 시 카메라 재시작 (홈 복귀 후 등)
+        if self.camera_available:
+            self.camera.play = True
+
+    def on_leave(self):
+        # 화면 벗어날 때 카메라 정지
+        if self.camera_available:
+            self.camera.play = False
 
     def _build_ui(self):
         root = BoxLayout(orientation='vertical', padding=dp(15), spacing=dp(10))
@@ -16991,7 +17000,7 @@ class CameraScreen(Screen):
             filename = os.path.join(save_dir, f'photo_{len(self.photos)+1}.png')
             try:
                 self.camera.export_to_png(filename)
-                self._rotate_image(filename, 90)
+                self._rotate_image(filename, 270)  # 반시계 90도 = 시계 270도
                 self.photos.append(filename)
                 self._add_thumbnail(filename)
             except Exception as e:
@@ -17031,24 +17040,34 @@ class CameraScreen(Screen):
     def _rotate_image(self, filepath, angle):
         """저장된 PNG를 회전 보정"""
         try:
-            # Pillow 사용
             from PIL import Image as PILImage
             img = PILImage.open(filepath)
-            img = img.rotate(-angle, expand=True)  # 시계방향 = 음수
+            # PIL rotate: 양수 = 반시계, expand=True로 크기 자동조정
+            img = img.rotate(angle, expand=True)
             img.save(filepath)
         except ImportError:
             try:
-                # Pillow 없으면 kivy texture로 회전
                 from kivy.core.image import Image as CoreImage
-                import struct, zlib
-
-                # PNG 파일을 텍스처로 읽어서 회전
                 tex = CoreImage(filepath).texture
                 w, h = tex.size
-                pixels = tex.pixels  # RGBA bytes
+                pixels = tex.pixels
 
-                # 90도 시계방향 회전: (x,y) → (h-1-y, x)
+                # 270도 시계방향 = 90도 반시계
                 new_pixels = bytearray(len(pixels))
+                for y in range(h):
+                    for x in range(w):
+                        src = (y * w + x) * 4
+                        nx = y
+                        ny = w - 1 - x
+                        dst = (ny * h + nx) * 4
+                        new_pixels[dst:dst+4] = pixels[src:src+4]
+
+                from kivy.graphics.texture import Texture
+                new_tex = Texture.create(size=(h, w), colorfmt='rgba')
+                new_tex.blit_buffer(bytes(new_pixels), colorfmt='rgba', bufferfmt='ubyte')
+                new_tex.save(filepath)
+            except Exception as e:
+                print(f'[회전] 실패: {e}')
                 for y in range(h):
                     for x in range(w):
                         src = (y * w + x) * 4
@@ -17506,6 +17525,25 @@ class WarehouseApp(App):
         sm.add_widget(PhotoDetailScreen(name='photo_detail'))
 
         return sm
+
+    def on_pause(self):
+        """앱이 백그라운드로 갈 때 카메라 정지"""
+        try:
+            cam_screen = self.root.get_screen('camera')
+            if cam_screen.camera_available:
+                cam_screen.camera.play = False
+        except Exception:
+            pass
+        return True  # True 반환해야 앱이 종료 안 됨
+
+    def on_resume(self):
+        """앱이 포그라운드로 돌아올 때 카메라 재시작"""
+        try:
+            cam_screen = self.root.get_screen('camera')
+            if cam_screen.camera_available and self.root.current == 'camera':
+                cam_screen.camera.play = True
+        except Exception:
+            pass
 
     def _request_permissions(self):
         try:
