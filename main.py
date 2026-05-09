@@ -17000,7 +17000,7 @@ class CameraScreen(Screen):
             filename = os.path.join(save_dir, f'photo_{len(self.photos)+1}.png')
             try:
                 self.camera.export_to_png(filename)
-                self._rotate_image(filename, 270)  # 반시계 90도 = 시계 270도
+                # 회전 보정 없이 그대로 저장
                 self.photos.append(filename)
                 self._add_thumbnail(filename)
             except Exception as e:
